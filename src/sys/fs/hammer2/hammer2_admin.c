@@ -311,6 +311,17 @@ xop_storage_func(hammer2_xop_head_t *xop, hammer2_inode_t *ip, void *scratch,
 void
 hammer2_xop_start(hammer2_xop_head_t *xop, hammer2_xop_desc_t *desc)
 {
+	hammer2_xop_start_except(xop, desc, -1);
+}
+
+/*
+ * Same as hammer2_xop_start() but skip cluster index notidx (-1 for none).
+ * Used by the cluster synchronizer to scan every node except its own.
+ */
+void
+hammer2_xop_start_except(hammer2_xop_head_t *xop, hammer2_xop_desc_t *desc,
+    int notidx)
+{
 	hammer2_inode_t *ip = xop->ip1;
 	uint32_t mask;
 	int i;
@@ -324,6 +335,8 @@ hammer2_xop_start(hammer2_xop_head_t *xop, hammer2_xop_desc_t *desc)
 		    M_WAITOK | M_ZERO);
 
 	for (i = 0; i < ip->cluster.nchains; ++i) {
+		if (i == notidx)
+			continue;
 		mask = 1LLU << i;
 		if (ip->cluster.array[i].chain) {
 			atomic_set_32(&xop->run_mask, mask);

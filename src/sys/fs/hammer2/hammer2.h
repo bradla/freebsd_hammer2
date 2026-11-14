@@ -82,6 +82,7 @@
 #include "hammer2_disk.h"
 #include "hammer2_ioctl.h"
 #include "hammer2_rb.h"
+#include "dmsg2.h"		/* kdmsg_iocom_t for cluster messaging */
 
 struct hammer2_io;
 struct hammer2_chain;
@@ -315,6 +316,7 @@ struct hammer2_chain {
 #define HAMMER2_ERROR_EAGAIN		0x00000100	/* retry */
 #define HAMMER2_ERROR_ENOTDIR		0x00000200	/* not directory */
 #define HAMMER2_ERROR_EISDIR		0x00000400	/* is directory */
+#define HAMMER2_ERROR_EINPROGRESS	0x00000800	/* already running */
 #define HAMMER2_ERROR_ABORTED		0x00001000	/* aborted operation */
 #define HAMMER2_ERROR_EOF		0x00002000	/* end of scan */
 #define HAMMER2_ERROR_EINVAL		0x00004000	/* catch-all */
@@ -415,6 +417,7 @@ struct hammer2_cluster_item {
 
 typedef struct hammer2_cluster_item hammer2_cluster_item_t;
 
+#define HAMMER2_CITEM_INVALID	0x00000001	/* not part of synchronized set */
 #define HAMMER2_CITEM_NULL	0x00000004
 
 struct hammer2_cluster {
@@ -844,6 +847,7 @@ struct hammer2_dev {
 	hammer2_dedup_t		heur_dedup[HAMMER2_DEDUP_HEUR_SIZE];
 	hammer2_iostat_t	iostat_read;	/* read I/O stat */
 	hammer2_iostat_t	iostat_write;	/* write I/O stat */
+	kdmsg_iocom_t		iocom;		/* cluster messaging (kdmsg) */
 };
 
 /*
@@ -954,6 +958,8 @@ void hammer2_xop_setip2(hammer2_xop_head_t *, hammer2_inode_t *);
 void hammer2_xop_setip3(hammer2_xop_head_t *, hammer2_inode_t *);
 void hammer2_xop_setip4(hammer2_xop_head_t *, hammer2_inode_t *);
 void hammer2_xop_start(hammer2_xop_head_t *, hammer2_xop_desc_t *);
+void hammer2_xop_start_except(hammer2_xop_head_t *, hammer2_xop_desc_t *,
+    int);
 void hammer2_xop_retire(hammer2_xop_head_t *, uint32_t);
 int hammer2_xop_feed(hammer2_xop_head_t *, hammer2_chain_t *, int, int);
 int hammer2_xop_collect(hammer2_xop_head_t *, int);
@@ -1139,6 +1145,52 @@ uid_t hammer2_inode_to_uid(const hammer2_inode_t *);
 gid_t hammer2_inode_to_gid(const hammer2_inode_t *);
 int hammer2_getnewfsid(struct mount *);
 
+/*
+ * Cluster synchronization thread (hammer2_synchro.c).
+ *
+ * NOTE: This port always runs a single-node cluster (nchains == 1) and
+ *	 nothing creates these threads yet; hammer2_sync_slaves() returns
+ *	 immediately when nchains < 2.
+ */
+struct hammer2_thread {
+	struct hammer2_pfs	*pmp;
+	struct hammer2_dev	*hmp;
+	struct thread		*td;		/* kthread; NULL if not running */
+	uint32_t		flags;		/* HAMMER2_THREAD_* */
+	int			clindex;	/* cluster element index */
+	int			repidx;
+};
+
+typedef struct hammer2_thread hammer2_thread_t;
+
+#define HAMMER2_THREAD_UNMOUNTING	0x0001	/* unmount request */
+#define HAMMER2_THREAD_DEV		0x0002	/* related to dev, not pfs */
+#define HAMMER2_THREAD_WAITING		0x0004	/* thread in idle tsleep */
+#define HAMMER2_THREAD_REMASTER		0x0008	/* remaster request */
+#define HAMMER2_THREAD_STOP		0x0010	/* exit request */
+#define HAMMER2_THREAD_FREEZE		0x0020	/* force idle */
+#define HAMMER2_THREAD_FROZEN		0x0040	/* thread is frozen */
+#define HAMMER2_THREAD_XOPQ		0x0080	/* work pending */
+#define HAMMER2_THREAD_STOPPED		0x0100	/* thread has stopped */
+#define HAMMER2_THREAD_UNFREEZE		0x0200
+
+#define HAMMER2_THREAD_WAKEUP_MASK	(HAMMER2_THREAD_UNMOUNTING |	\
+					 HAMMER2_THREAD_REMASTER |	\
+					 HAMMER2_THREAD_STOP |		\
+					 HAMMER2_THREAD_FREEZE |	\
+					 HAMMER2_THREAD_XOPQ)
+
+/* hammer2_synchro.c */
+void hammer2_primary_sync_thread(void *);
+void hammer2_thr_signal(hammer2_thread_t *, uint32_t);
+int hammer2_thr_break(hammer2_thread_t *);
+
+/* hammer2_iocom.c */
+extern int hammer2_debug;
+void hammer2_iocom_init(hammer2_dev_t *);
+void hammer2_iocom_uninit(hammer2_dev_t *);
+void hammer2_cluster_reconnect(hammer2_dev_t *, struct file *);
+
 /* hammer2_vfsops.c */
 hammer2_pfs_t *hammer2_pfsalloc(hammer2_chain_t *, const hammer2_inode_data_t *,
     hammer2_dev_t *);
@@ -1197,6 +1249,8 @@ hammer2_error_to_errno(int error)
 		return (ENOTDIR);
 	else if (error & HAMMER2_ERROR_EISDIR)
 		return (EISDIR);
+	else if (error & HAMMER2_ERROR_EINPROGRESS)
+		return (EINPROGRESS);
 	else if (error & HAMMER2_ERROR_ABORTED)
 		return (EINTR);
 	//else if (error & HAMMER2_ERROR_EOF)
