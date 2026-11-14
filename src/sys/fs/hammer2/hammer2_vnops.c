@@ -687,6 +687,20 @@ hammer2_readdir(struct vop_readdir_args *ap)
 	/* Use XOP for remaining entries. */
 	xop = hammer2_xop_alloc(ip, 0);
 	xop->lkey = saveoff | HAMMER2_DIRHASH_VISIBLE;
+		/*
+	 * XOPs run synchronously on FreeBSD: without a limit the backend
+	 * walks every remaining directory entry on each call (O(n^2) for
+	 * a full listing).  Bound it to an upper bound of what this call
+	 * can return; a struct dirent is >= 32 bytes, so resid/16 is safe.
+	 * The +1 extra entry makes the frontend stop on "buffer full" or
+	 * "cookies full", never on the end-of-feed marker, which it would
+	 * otherwise mistake for end of directory.
+	 */
+	xop->maxents = uio->uio_resid / 16 + 1;
+	if (ncookies > 0 && xop->maxents > ncookies - cookie_index)
+		xop->maxents = ncookies - cookie_index;
+	xop->maxents += 1;
+
 	hammer2_xop_start(&xop->head, &hammer2_readdir_desc);
 
 	for (;;) {
@@ -1040,6 +1054,16 @@ hammer2_write_file(hammer2_inode_t *ip, struct uio *uio, int ioflag,
 			/* bp->b_flags |= B_CLUSTEROK; */
 			bawrite(bp);
 		} else if (vp->v_mount->mnt_flag & MNT_NOCLUSTERW) {
+			bdwrite(bp);
+		} else if (!endofblk) {
+		/*
+		 * Partial logical block: more writes into this buffer are
+		 * likely.  FreeBSD's cluster_write() would bawrite() it at once
+		 * (hammer2_bmap() reports no contiguous run), forcing a full
+		 * 64K copy-on-write per small write().  Keep it dirty instead;
+		 * it is clustered when the block fills, or flushed by the
+		 * syncer/fsync.
+		 */
 			bdwrite(bp);
 		} else {
 			bp->b_flags |= B_CLUSTEROK;

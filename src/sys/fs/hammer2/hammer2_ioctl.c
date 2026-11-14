@@ -1126,6 +1126,18 @@ hammer2_ioctl_impl(struct vnode *vp, unsigned long com, void *data, int fflag,
 		break;
 	case FIOSEEKDATA:
 	case FIOSEEKHOLE:
+		/*
+		 * Partial-block writes stay dirty in the buffer cache (see
+		 * hammer2_write_file) and HAMMER2 assigns blocks only when a
+		 * buffer is written out, so VOP_BMAP cannot see that data yet.
+		 * Push this file's dirty buffers first so SEEK_DATA/SEEK_HOLE
+		 * see everything that has been written.
+		 */
+		vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+		error = vn_fsync_buf(vp, MNT_WAIT);
+		VOP_UNLOCK(vp);
+		if (error)
+			break;
 		KKASSERT(ip->in_seek == 0);
 		ip->in_seek = 1;
 		error = vn_bmap_seekhole(vp, com, (off_t *)data, cred);

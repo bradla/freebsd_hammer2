@@ -90,6 +90,13 @@ int malloc_leak_m_hammer2_lz4;
 int malloc_leak_m_temp;
 
 SYSCTL_NODE(_vfs, OID_AUTO, hammer2, CTLFLAG_RW, 0, "HAMMER2 filesystem");
+#ifndef HAMMER2_BUILD_ID
+#define HAMMER2_BUILD_ID "h2build-unknown"
+#endif
+static char hammer2_build_id[] = HAMMER2_BUILD_ID;
+SYSCTL_STRING(_vfs_hammer2, OID_AUTO, build_id, CTLFLAG_RD,
+    hammer2_build_id, 0, "Build ID of the loaded hammer2.ko");
+
 SYSCTL_INT(_vfs_hammer2, OID_AUTO, supported_version, CTLFLAG_RD,
     &hammer2_supported_version, 0, "Highest supported HAMMER2 version");
 SYSCTL_INT(_vfs_hammer2, OID_AUTO, cluster_meta_read, CTLFLAG_RW,

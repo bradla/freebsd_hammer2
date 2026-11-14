@@ -611,6 +611,7 @@ struct hammer2_xop_ipcluster {
 struct hammer2_xop_readdir {
 	hammer2_xop_head_t	head;
 	hammer2_key_t		lkey;
+	int			maxents;	/* FreeBSD: backend feed limit */
 };
 
 struct hammer2_xop_nresolve {

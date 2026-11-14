@@ -162,6 +162,7 @@ hammer2_xop_readdir(hammer2_xop_t *arg, void *scratch, int clindex)
 	hammer2_chain_t *chain, *parent;
 	hammer2_key_t lkey, key_next;
 	int error = 0;
+	int fed = 0;
 
 	lkey = xop->lkey;
 
@@ -189,6 +190,8 @@ hammer2_xop_readdir(hammer2_xop_t *arg, void *scratch, int clindex)
 	while (chain) {
 		error = hammer2_xop_feed(&xop->head, chain, clindex, 0);
 		if (error)
+			goto break2;
+		if (++fed >= xop->maxents)	/* enough for this call */
 			goto break2;
 		chain = hammer2_chain_next(&parent, chain, &key_next,
 		    HAMMER2_KEY_MAX, &error,
