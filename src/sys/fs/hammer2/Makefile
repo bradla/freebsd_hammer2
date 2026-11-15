@@ -26,4 +26,8 @@ CFLAGS+=	-DHAMMER2_ATIME
 
 WARNS=	5
 
+# Build ID: identifies which build is loaded (sysctl vfs.hammer2.build_id)
+H2_BUILD_ID!=	date +%Y%m%d-%H%M%S
+CFLAGS+=	-DHAMMER2_BUILD_ID=\"h2build-${H2_BUILD_ID}\"
+
 .include <bsd.kmod.mk>
